@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-28
+
+### Changed
+
+- **Breaking:** the extension is renamed from Dependi to Depsy at the request
+  of the Dependi (dependi.io) maintainers
+  ([#377](https://github.com/mpiton/zed-dependi/issues/377)). The Zed extension
+  id is now `depsy`, the language server binary is `depsy-lsp`, the settings
+  key is `lsp.depsy`, and the cache lives in `~/.cache/depsy`. Existing users
+  must install `depsy` and uninstall `dependi`. `lsp.dependi.initialization_options`
+  is still read as a fallback so existing configuration keeps working.
+- The "ignore this package" code action copies any entries from
+  `lsp.dependi.initialization_options.ignore` into the new `lsp.depsy` list.
+  Zed replaces arrays when it merges the two keys, so without this the first
+  new ignore would drop every package ignored under the old key.
+
+### Fixed
+
+- CI: aarch64 Linux release builds with Rust 1.98 (cargo-zigbuild 0.23.2, rust-cross/cargo-zigbuild#452).
+
+### Security
+
+- Bump `h2` to 0.4.19 (RUSTSEC-2026-0258, unbounded empty HTTP/2 DATA frames).
+
 ## [1.10.0] - 2026-07-11
 
 ### Added
@@ -786,7 +810,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In-memory caching for version data
 - Parallel registry requests (5 concurrent)
 
-[Unreleased]: https://github.com/mpiton/zed-dependi/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/mpiton/zed-depsy/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/mpiton/zed-depsy/compare/v1.10.0...v2.0.0
 [1.10.0]: https://github.com/mpiton/zed-dependi/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/mpiton/zed-dependi/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mpiton/zed-dependi/compare/v1.8.1...v1.9.0
