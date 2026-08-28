@@ -7,7 +7,7 @@ use hashbrown::HashMap;
 
 use crate::parsers::Dependency;
 use crate::parsers::lockfile_graph::{LockfileGraph, LockfilePackage};
-use crate::parsers::lockfile_resolver::LockfileResolver;
+use crate::parsers::lockfile_resolver::{LockfileResolver, select_locked_version};
 
 /// Parse a Cargo.lock file and return a map of package name → resolved version.
 ///
@@ -235,12 +235,17 @@ impl LockfileResolver for CargoResolver {
                 }
             }
         }
-        // Fallback: first-wins lookup by name.
-        graph
-            .packages
-            .iter()
-            .find(|p| p.name == dep.name)
-            .map(|p| p.version.clone())
+        // Fallback: pick the locked entry matching the declared requirement
+        // (a lockfile may carry several versions of the same crate)
+        select_locked_version(
+            &dep.version,
+            graph
+                .packages
+                .iter()
+                .filter(|p| p.name == dep.name)
+                .map(|p| p.version.as_str()),
+        )
+        .map(str::to_owned)
     }
 }
 
