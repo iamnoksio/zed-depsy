@@ -231,7 +231,16 @@ impl LockfileResolver for CargoResolver {
                     && crate_name == dep.name
                 {
                     let version = version_part.split(' ').next().unwrap_or(version_part);
-                    return Some(version.to_string());
+                    // The root pin still has to satisfy the manifest: a stale
+                    // lockfile may name a version the declared range forbids
+                    // `select_locked_version` keeps the tolerant behaviour for
+                    // unparseable requirements/versions
+                    if select_locked_version(&dep.version, [version]).is_some() {
+                        return Some(version.to_string());
+                    }
+                    // Names are unique in the root's dependency array; fall
+                    // through to the whole-graph lookup below
+                    break;
                 }
             }
         }
@@ -574,6 +583,68 @@ version = "1.0.0"
             resolver.resolve_version(&dep, &graph),
             Some("1.0.0".to_string())
         );
+    }
+
+    #[test]
+    fn cargo_resolver_rejects_a_root_pin_the_manifest_forbids() {
+        use crate::parsers::Dependency;
+        use crate::parsers::Span;
+        use crate::parsers::lockfile_resolver::LockfileResolver;
+
+        // Stale lockfile: the root still points at 2.0.0 while the manifest
+        // has been narrowed to `~1.1`
+        let content = r#"
+    version = 3
+
+    [[package]]
+    name = "demo"
+    version = "0.1.0"
+    dependencies = [
+     "multi 2.0.0",
+    ]
+
+    [[package]]
+    name = "multi"
+    version = "2.0.0"
+
+    [[package]]
+    name = "multi"
+    version = "1.1.3"
+    "#;
+        let resolver = super::CargoResolver {
+            root_package: Some("demo".to_string()),
+        };
+        let graph = resolver.parse_graph(content);
+        let mut dep = Dependency {
+            name: "multi".to_string(),
+            version: "~1.1".to_string(),
+            name_span: Span {
+                line: 0,
+                line_start: 0,
+                line_end: 0,
+            },
+            version_span: Span {
+                line: 0,
+                line_start: 0,
+                line_end: 0,
+            },
+            dev: false,
+            optional: false,
+            registry: None,
+            resolved_version: None,
+            has_additional_version_constraints: false,
+        };
+        // Root pin is incompatible: resolution continues into the graph.
+        assert_eq!(
+            resolver.resolve_version(&dep, &graph),
+            Some("1.1.3".to_string()),
+            "an incompatible root pin must not shadow the compatible entry"
+        );
+
+        // And when nothing in the graph satisfies the requirement, the
+        // dependency stays unresolved rather than showing 2.0.0
+        dep.version = "~1.5".to_string();
+        assert_eq!(resolver.resolve_version(&dep, &graph), None);
     }
 
     #[test]

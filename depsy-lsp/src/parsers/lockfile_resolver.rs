@@ -63,9 +63,6 @@ pub(crate) fn select_locked_version<'a>(
     candidates: impl IntoIterator<Item = &'a str>,
 ) -> Option<&'a str> {
     let candidates: Vec<&'a str> = candidates.into_iter().collect();
-    if candidates.len() <= 1 {
-        return candidates.first().copied();
-    }
     if let Ok(req) = semver::VersionReq::parse(strip_v(declared.trim())) {
         let parsed: Vec<(semver::Version, &'a str)> = candidates
             .iter()
@@ -439,6 +436,16 @@ version = "0.0.1"
         // Requirement parses and candidates parse, but nothing satisfies it:
         // leaving it unresolved is better than pinning a forbidden version
         assert_eq!(select_locked_version("~1.1", ["1.2.0", "1.3.0"]), None);
+        // Same rule with a single candidate: the sole-pin path must not be a
+        // hole in the check
+        assert_eq!(select_locked_version("~1.1", ["1.2.0"]), None);
+        assert_eq!(select_locked_version("~1.1", ["1.1.9"]), Some("1.1.9"));
+        // Tolerant fallbacks still apply with one candidate
+        assert_eq!(select_locked_version("~=1.4", ["1.6.0"]), Some("1.6.0"));
+        assert_eq!(
+            select_locked_version(">=1.0", ["2024.1.1.5"]),
+            Some("2024.1.1.5")
+        );
     }
 
     #[tokio::test]
