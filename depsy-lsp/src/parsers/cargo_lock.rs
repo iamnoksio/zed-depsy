@@ -196,7 +196,9 @@ pub async fn find_cargo_lock(cargo_toml_path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// True when `v` satisfies `req`, treating a pre-release as its release core
+/// True when `v` satisfies `req`, treating a pre-release as its release core.
+/// Used as a fallback only: `semver` excludes pre-releases from a range whose
+/// comparators carry none, but a lockfile pinning one is still ground truth
 fn satisfies(req: &semver::VersionReq, v: &semver::Version) -> bool {
     req.matches(v)
         || (!v.pre.is_empty() && req.matches(&semver::Version::new(v.major, v.minor, v.patch)))
@@ -221,10 +223,14 @@ fn select_locked_version<'a>(
         return candidates.first().copied();
     }
 
+    // Strict match first: a stable release present in the lockfile must win
+    // over a pre-release of the same version. Only when nothing matches
+    // strictly does the pre-release fallback apply
     parsed
-        .into_iter()
-        .find(|(v, _)| satisfies(&req, v))
-        .map(|(_, c)| c)
+        .iter()
+        .find(|(v, _)| req.matches(v))
+        .or_else(|| parsed.iter().find(|(v, _)| satisfies(&req, v)))
+        .map(|(_, c)| *c)
 }
 
 /// Resolves versions from `Cargo.lock` for a Rust project.
@@ -662,6 +668,16 @@ version = "1.0.0"
         assert_eq!(
             select_locked_version("1.3", ["1.3.0-rc.1"]),
             Some("1.3.0-rc.1")
+        );
+        // ...but only as a fallback: a stable entry that matches strictly wins
+        // over a pre-release of the same version, whatever the lockfile order
+        assert_eq!(
+            select_locked_version("4.0.0", ["4.0.0-rc.1", "4.0.0"]),
+            Some("4.0.0")
+        );
+        assert_eq!(
+            select_locked_version("^4.0.0", ["4.0.0-rc.1", "4.0.0"]),
+            Some("4.0.0")
         );
         // Tolerant fallbacks
         assert_eq!(select_locked_version("not a req", ["1.0.0"]), Some("1.0.0"));
