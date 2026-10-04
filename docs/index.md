@@ -53,7 +53,7 @@ Depsy provides comprehensive dependency management directly in your editor:
 | Language | File | Registry |
 |----------|------|----------|
 | [Rust]({% link languages/rust.md %}) | `Cargo.toml` | crates.io |
-| [JavaScript/TypeScript]({% link languages/nodejs.md %}) | `package.json` | npm |
+| [JavaScript/TypeScript]({% link languages/nodejs.md %}) | `package.json`, `pnpm-workspace.yaml` | npm |
 | [Python]({% link languages/python.md %}) | `requirements.txt`, `constraints.txt`, `pyproject.toml` | PyPI |
 | [Go]({% link languages/go.md %}) | `go.mod` | proxy.golang.org |
 | [PHP]({% link languages/php.md %}) | `composer.json` | Packagist |

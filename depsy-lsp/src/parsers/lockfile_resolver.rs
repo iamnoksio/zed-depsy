@@ -80,10 +80,16 @@ pub trait LockfileResolver: Send + Sync {
 /// time so the resolver can cache the lockfile path and sub-format variant
 /// (e.g., `package-lock.json` vs `yarn.lock`).
 ///
+/// A `pnpm-workspace.yaml` manifest gets a
+/// [`PnpmWorkspaceResolver`](crate::parsers::pnpm_workspace::PnpmWorkspaceResolver),
+/// which uses only the `pnpm-lock.yaml` next to it.
+///
 /// # Returns
 ///
 /// `Some(resolver)` for supported manifest/lockfile pairs. Returns `None` for
-/// [`FileType::Maven`] and for C# manifests that are not `.csproj` files.
+/// [`FileType::Maven`], for C# manifests that are not `.csproj` files, and for
+/// a `pnpm-workspace.yaml` without catalog entries or without a sibling
+/// `pnpm-lock.yaml`, even when another package manager's lockfile is present.
 pub async fn select_resolver(
     file_type: FileType,
     manifest_path: &Path,
@@ -97,6 +103,15 @@ pub async fn select_resolver(
             }))
         }
         FileType::Npm => {
+            if crate::file_types::is_pnpm_workspace_path(manifest_path) {
+                let resolver =
+                    crate::parsers::pnpm_workspace::PnpmWorkspaceResolver::for_workspace(
+                        manifest_path,
+                        manifest_content,
+                    )
+                    .await?;
+                return Some(Box::new(resolver));
+            }
             let (lock_path, sub) =
                 crate::parsers::npm_lock::find_npm_lockfile(manifest_path).await?;
             Some(Box::new(crate::parsers::npm_lock::NpmResolver {

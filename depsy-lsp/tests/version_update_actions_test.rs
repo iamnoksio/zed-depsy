@@ -8,6 +8,7 @@ use depsy_lsp::parsers::go::GoParser;
 use depsy_lsp::parsers::maven::MavenParser;
 use depsy_lsp::parsers::npm::NpmParser;
 use depsy_lsp::parsers::php::PhpParser;
+use depsy_lsp::parsers::pnpm_workspace::PnpmWorkspaceParser;
 use depsy_lsp::parsers::python::PythonParser;
 use depsy_lsp::parsers::ruby::RubyParser;
 use depsy_lsp::providers::code_actions::create_code_actions;
@@ -113,6 +114,24 @@ async fn parsed_manifests_keep_safe_constraint_shapes_when_updated() {
             manifest: "{\n  \"dependencies\": {\n    \"package\": \"^4.0.2\"\n  }\n}\n",
             latest: "5.1.0",
             expected: "{\n  \"dependencies\": {\n    \"package\": \"^5.1.0\"\n  }\n}\n",
+        },
+        UpdateCase {
+            parser: Box::new(PnpmWorkspaceParser::new()),
+            file_type: FileType::Npm,
+            uri: "file:///test/pnpm-workspace.yaml",
+            package: "lodash",
+            manifest: "packages:\n  - packages/*\ncatalog:\n  lodash: ^4.17.15 # shared\ncatalogs:\n  legacy:\n    \"minimist\": \"1.2.0\"\n",
+            latest: "4.18.1",
+            expected: "packages:\n  - packages/*\ncatalog:\n  lodash: ^4.18.1 # shared\ncatalogs:\n  legacy:\n    \"minimist\": \"1.2.0\"\n",
+        },
+        UpdateCase {
+            parser: Box::new(PnpmWorkspaceParser::new()),
+            file_type: FileType::Npm,
+            uri: "file:///test/pnpm-workspace.yaml",
+            package: "minimist",
+            manifest: "packages:\n  - packages/*\ncatalog:\n  lodash: ^4.17.15 # shared\ncatalogs:\n  legacy:\n    \"minimist\": \"1.2.0\"\n",
+            latest: "1.2.8",
+            expected: "packages:\n  - packages/*\ncatalog:\n  lodash: ^4.17.15 # shared\ncatalogs:\n  legacy:\n    \"minimist\": \"1.2.8\"\n",
         },
         UpdateCase {
             parser: Box::new(PythonParser::new()),

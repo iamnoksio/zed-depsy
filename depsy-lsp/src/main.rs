@@ -209,6 +209,8 @@ async fn run_scan(
     fail_on_vulns: bool,
     use_lockfile: bool,
 ) -> ExitCode {
+    use depsy_lsp::file_types::FileType;
+    use depsy_lsp::parsers::lockfile_resolver::{resolve_versions_from_lockfile, select_resolver};
     use depsy_lsp::parsers::{
         Parser, cargo::CargoParser, cargo_lock, composer_lock, csharp::CsharpParser,
         dart::DartParser, gemfile_lock, go::GoParser, lockfile_graph::LockfileGraph,
@@ -225,6 +227,7 @@ async fn run_scan(
         Ecosystem, VulnerabilityQuery, normalize_version_for_osv, osv::OsvClient,
     };
     use hashbrown::{HashMap, HashSet};
+    use std::sync::Arc;
 
     fn inc_sev(
         sev: depsy_lsp::registries::VulnerabilitySeverity,
@@ -255,14 +258,21 @@ async fn run_scan(
 
     let file_name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
+    let is_pnpm_workspace = depsy_lsp::file_types::is_pnpm_workspace_path(&file);
+
     // Detect file type and parse
-    let (dependencies, ecosystem) = if file_name == "Cargo.toml" {
+    let (mut dependencies, ecosystem) = if file_name == "Cargo.toml" {
         (CargoParser::new().parse(&content), Ecosystem::CratesIo)
     } else if file_name == "package.json" {
         let dependencies = NpmParser::new().parse(&content);
         let workspace_content = pnpm_workspace::read_pnpm_workspace_for_package(&file).await;
         (
             pnpm_workspace::resolve_catalog_references(dependencies, workspace_content.as_deref()),
+            Ecosystem::Npm,
+        )
+    } else if is_pnpm_workspace {
+        (
+            pnpm_workspace::PnpmWorkspaceParser::new().parse(&content),
             Ecosystem::Npm,
         )
     } else if file_name == "requirements.txt" || file_name == "pyproject.toml" {
@@ -304,7 +314,16 @@ async fn run_scan(
                 }
             }
             Ecosystem::Npm => {
-                if let Some((path, kind)) = npm_lock::find_npm_lockfile(&file).await
+                if is_pnpm_workspace {
+                    // A catalog entry is locked per catalog, not per package
+                    // name: resolve it the way the language server does.
+                    if let Some(resolver) = select_resolver(FileType::Npm, &file, &content).await
+                        && let Some(graph) =
+                            resolve_versions_from_lockfile(&mut dependencies, resolver, &file).await
+                    {
+                        lockfile_graph = Arc::unwrap_or_clone(graph);
+                    }
+                } else if let Some((path, kind)) = npm_lock::find_npm_lockfile(&file).await
                     && let Ok(lock_content) = read_lockfile_capped(&path).await
                 {
                     lockfile_graph = match kind {
@@ -372,11 +391,12 @@ async fn run_scan(
             .collect()
     };
 
-    let mut dependencies = dependencies;
-    for dep in dependencies.iter_mut() {
-        let key = canonical_name(ecosystem, &dep.name);
-        if let Some(v) = version_map.get(&key) {
-            dep.resolved_version = Some(v.clone());
+    if !is_pnpm_workspace {
+        for dep in dependencies.iter_mut() {
+            let key = canonical_name(ecosystem, &dep.name);
+            if let Some(v) = version_map.get(&key) {
+                dep.resolved_version = Some(v.clone());
+            }
         }
     }
 

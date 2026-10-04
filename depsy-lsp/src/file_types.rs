@@ -4,6 +4,8 @@
 //! and provides mappings to ecosystems and cache keys.
 
 use core::fmt;
+use std::ffi::OsStr;
+use std::path::Path;
 
 use tower_lsp::lsp_types::Url;
 
@@ -17,7 +19,7 @@ use crate::vulnerabilities::Ecosystem;
 pub enum FileType {
     /// Rust packages (Cargo.toml)
     Cargo,
-    /// JavaScript/Node.js packages (package.json)
+    /// JavaScript/Node.js packages (package.json, pnpm-workspace.yaml)
     Npm,
     /// Python packages (requirements.txt, constraints.txt, pyproject.toml)
     Python,
@@ -35,6 +37,20 @@ pub enum FileType {
     Maven,
 }
 
+/// File name of the pnpm workspace manifest that holds dependency catalogs.
+pub const PNPM_WORKSPACE_FILENAME: &str = "pnpm-workspace.yaml";
+
+/// Returns `true` when `uri` points at a `pnpm-workspace.yaml` file.
+pub fn is_pnpm_workspace(uri: &Url) -> bool {
+    let path = uri.path();
+    path.rsplit('/').next().unwrap_or(path) == PNPM_WORKSPACE_FILENAME
+}
+
+/// Returns `true` when `path` points at a `pnpm-workspace.yaml` file.
+pub fn is_pnpm_workspace_path(path: &Path) -> bool {
+    path.file_name() == Some(OsStr::new(PNPM_WORKSPACE_FILENAME))
+}
+
 impl FileType {
     /// Detect the file type from a document URI.
     ///
@@ -45,7 +61,9 @@ impl FileType {
         let filename = path.rsplit('/').next().unwrap_or(path);
         if path.ends_with("Cargo.toml") {
             Some(FileType::Cargo)
-        } else if path.ends_with("package.json") {
+        } else if path.ends_with("package.json") || filename == PNPM_WORKSPACE_FILENAME {
+            // pnpm workspace catalogs pin npm packages, so they share the npm
+            // registry, cache keys and version syntax with `package.json`.
             Some(FileType::Npm)
         } else if filename.ends_with(".txt")
             && (filename.contains("constraints") || filename.contains("requirements"))
@@ -180,6 +198,35 @@ mod tests {
     fn test_detect_npm() {
         let uri = Url::parse("file:///project/package.json").unwrap();
         assert_eq!(FileType::detect(&uri), Some(FileType::Npm));
+    }
+
+    #[test]
+    fn test_detect_pnpm_workspace() {
+        let uri = Url::parse("file:///project/pnpm-workspace.yaml").unwrap();
+        assert_eq!(FileType::detect(&uri), Some(FileType::Npm));
+        assert!(is_pnpm_workspace(&uri));
+
+        for other in [
+            "file:///project/package.json",
+            "file:///project/pnpm-lock.yaml",
+            "file:///project/my-pnpm-workspace.yaml",
+            "file:///project/pnpm-workspace.yml",
+        ] {
+            let uri = Url::parse(other).unwrap();
+            assert!(!is_pnpm_workspace(&uri), "{other}");
+        }
+
+        assert!(is_pnpm_workspace_path(Path::new(
+            "/project/pnpm-workspace.yaml"
+        )));
+        assert!(!is_pnpm_workspace_path(Path::new(
+            "/project/pnpm-workspace.yml"
+        )));
+
+        let uri = Url::parse("file:///project/pnpm-lock.yaml").unwrap();
+        assert_eq!(FileType::detect(&uri), None);
+        let uri = Url::parse("file:///project/my-pnpm-workspace.yaml").unwrap();
+        assert_eq!(FileType::detect(&uri), None);
     }
 
     #[test]

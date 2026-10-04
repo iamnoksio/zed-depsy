@@ -353,11 +353,23 @@ async fn create_update_all_action(
         cache_results[idx] = value;
     }
 
+    // A package pinned by several pnpm catalogs is kept at diverging versions
+    // on purpose: a bulk update must not collapse them onto one version.
+    let mut catalog_pins: hashbrown::HashMap<String, usize> = hashbrown::HashMap::new();
+    if crate::file_types::is_pnpm_workspace(uri) {
+        for dep in dependencies {
+            *catalog_pins.entry_ref(dep.name.as_str()).or_default() += 1;
+        }
+    }
+
     let mut safe_updates: Vec<(&Dependency, String)> = Vec::new();
     for (dep, version_info) in dependencies.iter().copied().zip(cache_results) {
         let Some(version_info) = version_info else {
             continue;
         };
+        if catalog_pins.get(dep.name.as_str()).is_some_and(|n| *n > 1) {
+            continue;
+        }
         if let VersionStatus::UpdateAvailable(new_version) =
             compare_versions(dep.effective_version(), &version_info)
             && let Some(new_text) = render_version_update(dep, &new_version, file_type)

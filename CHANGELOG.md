@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pnpm-workspace.yaml` is now a supported file: opening it shows inlay hints,
+  diagnostics, vulnerability checks, hover, document links and update code
+  actions on the entries of the default `catalog` and of named `catalogs`.
+  `depsy-lsp scan --file pnpm-workspace.yaml` scans the catalog entries too.
+
 ### Security
 
 - `rustls` 0.23.45 fixes RUSTSEC-2026-0285 (TLS 1.3 handshake messages

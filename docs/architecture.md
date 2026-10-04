@@ -208,7 +208,7 @@ Per-open-document snapshot held in `documents: DashMap<Url, DocumentState>` on t
 
 ### `FileType` (`depsy-lsp/src/file_types.rs`)
 
-A `Copy`-able enum tagging the ecosystem of an open file: `Cargo`, `Npm`, `Python` (covers `requirements.txt`, `constraints.txt`, `pyproject.toml`, `hatch.toml`), `Go`, `Php`, `Dart`, `Csharp`, `Ruby`, `Maven`. Single source of truth used by handlers, parsers and providers when picking ecosystem-specific behaviour. Lockfiles do *not* get their own variants — the ecosystem variant identifies both manifest and lockfile, and `lockfile_resolver.rs` handles per-ecosystem dispatch.
+A `Copy`-able enum tagging the ecosystem of an open file: `Cargo`, `Npm` (covers `package.json` and `pnpm-workspace.yaml`), `Python` (covers `requirements.txt`, `constraints.txt`, `pyproject.toml`, `hatch.toml`), `Go`, `Php`, `Dart`, `Csharp`, `Ruby`, `Maven`. Single source of truth used by handlers, parsers and providers when picking ecosystem-specific behaviour. Lockfiles do *not* get their own variants — the ecosystem variant identifies both manifest and lockfile, and `lockfile_resolver.rs` handles per-ecosystem dispatch. `Npm` is the one variant where the file name (`file_types::is_pnpm_workspace`) also selects the parser (`PnpmWorkspaceParser`) and the resolver (`PnpmWorkspaceResolver`).
 
 ## 5. Parsers
 
@@ -242,7 +242,7 @@ pub fn detect(uri: &Url) -> Option<Self> {
 }
 ```
 
-The downstream `process_document` switches on the resulting `FileType` to pick the right `Arc<XxxParser>` from `DepsyBackend`. Static dispatch, zero virtual calls.
+The downstream `process_document` switches on the resulting `FileType` to pick the right `Arc<XxxParser>` from `DepsyBackend`; for `Npm`, a `pnpm-workspace.yaml` file name routes to `PnpmWorkspaceParser` instead of `NpmParser`. Static dispatch, zero virtual calls.
 
 ### Lockfile resolution
 

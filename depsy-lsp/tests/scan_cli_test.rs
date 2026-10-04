@@ -322,3 +322,229 @@ async fn test_scan_html_output() {
         "expected closing </html> tag"
     );
 }
+
+#[tokio::test]
+async fn test_scan_pnpm_workspace_catalogs_queries_npm_ecosystem() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/querybatch"))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = request
+                .body_json()
+                .expect("querybatch request body should be valid JSON");
+            let results: Vec<serde_json::Value> = body["queries"]
+                .as_array()
+                .expect("querybatch.queries should be an array")
+                .iter()
+                .map(|_| serde_json::json!({ "vulns": [] }))
+                .collect();
+
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": results
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let workspace_path = tmp.path().join("pnpm-workspace.yaml");
+    std::fs::write(
+        &workspace_path,
+        r#"packages:
+  - packages/*
+catalog:
+  lodash: ^4.17.21
+catalogs:
+  react17:
+    react: ^17.0.2
+  react18:
+    react: ^18.2.0
+"#,
+    )
+    .expect("failed to write pnpm-workspace.yaml");
+
+    let output = Command::new(depsy_lsp_bin())
+        .env("OSV_ENDPOINT", server.uri())
+        .args(["scan", "--output", "json", "--file"])
+        .arg(&workspace_path)
+        .output()
+        .expect("failed to run depsy-lsp");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "scan of pnpm-workspace.yaml should succeed\nstdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let requests = server
+        .received_requests()
+        .await
+        .expect("failed to collect mock server requests");
+    let querybatch_body: serde_json::Value = requests
+        .iter()
+        .find(|request| request.url.path() == "/querybatch")
+        .expect("expected POST /querybatch")
+        .body_json()
+        .expect("querybatch body should be valid JSON");
+    let queries = querybatch_body["queries"]
+        .as_array()
+        .expect("querybatch.queries should be an array");
+
+    assert_eq!(
+        queries.len(),
+        3,
+        "expected exactly three OSV queries for the catalog entries, got {queries:?}"
+    );
+    for (package_name, version) in [
+        ("lodash", "4.17.21"),
+        ("react", "17.0.2"),
+        ("react", "18.2.0"),
+    ] {
+        assert!(
+            queries.iter().any(|query| {
+                query["package"]["name"] == package_name
+                    && query["package"]["ecosystem"] == "npm"
+                    && query["version"] == version
+            }),
+            "expected npm OSV query for {package_name}@{version}, got {queries:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_scan_pnpm_workspace_catalogs_queries_versions_locked_per_catalog() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/querybatch"))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = request
+                .body_json()
+                .expect("querybatch request body should be valid JSON");
+            let results: Vec<serde_json::Value> = body["queries"]
+                .as_array()
+                .expect("querybatch.queries should be an array")
+                .iter()
+                .map(|_| serde_json::json!({ "vulns": [] }))
+                .collect();
+
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": results
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+    let workspace_path = tmp.path().join("pnpm-workspace.yaml");
+    std::fs::write(
+        &workspace_path,
+        r#"packages:
+  - packages/*
+catalog:
+  lodash: ^4.17.0
+catalogs:
+  react17:
+    react: ^17.0.2
+  react18:
+    react: ^18.2.0
+"#,
+    )
+    .expect("failed to write pnpm-workspace.yaml");
+    std::fs::write(
+        tmp.path().join("pnpm-lock.yaml"),
+        r#"lockfileVersion: '9.0'
+
+catalogs:
+  default:
+    lodash:
+      specifier: ^4.17.0
+      version: 4.17.21
+  react17:
+    react:
+      specifier: ^17.0.2
+      version: 17.0.2
+  react18:
+    react:
+      specifier: ^18.2.0
+      version: 18.3.1
+
+packages:
+
+  lodash@4.17.21:
+    resolution: {integrity: sha512-lodash}
+
+  react@17.0.2:
+    resolution: {integrity: sha512-react17}
+
+  react@18.3.1:
+    resolution: {integrity: sha512-react18}
+
+snapshots:
+
+  lodash@4.17.21: {}
+
+  react@17.0.2: {}
+
+  react@18.3.1: {}
+"#,
+    )
+    .expect("failed to write pnpm-lock.yaml");
+    std::fs::write(
+        tmp.path().join("package-lock.json"),
+        r#"{"lockfileVersion":3,"packages":{"node_modules/lodash":{"version":"4.17.15"}}}"#,
+    )
+    .expect("failed to write package-lock.json");
+
+    let output = Command::new(depsy_lsp_bin())
+        .env("OSV_ENDPOINT", server.uri())
+        .args(["scan", "--output", "json", "--file"])
+        .arg(&workspace_path)
+        .output()
+        .expect("failed to run depsy-lsp");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "scan of pnpm-workspace.yaml should succeed\nstdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let requests = server
+        .received_requests()
+        .await
+        .expect("failed to collect mock server requests");
+    let querybatch_body: serde_json::Value = requests
+        .iter()
+        .find(|request| request.url.path() == "/querybatch")
+        .expect("expected POST /querybatch")
+        .body_json()
+        .expect("querybatch body should be valid JSON");
+    let queries = querybatch_body["queries"]
+        .as_array()
+        .expect("querybatch.queries should be an array");
+
+    assert_eq!(
+        queries.len(),
+        3,
+        "expected exactly three OSV queries for the catalog entries, got {queries:?}"
+    );
+    for (package_name, version) in [
+        ("lodash", "4.17.21"),
+        ("react", "17.0.2"),
+        ("react", "18.3.1"),
+    ] {
+        assert!(
+            queries.iter().any(|query| {
+                query["package"]["name"] == package_name
+                    && query["package"]["ecosystem"] == "npm"
+                    && query["version"] == version
+            }),
+            "expected npm OSV query for {package_name}@{version}, got {queries:?}"
+        );
+    }
+}

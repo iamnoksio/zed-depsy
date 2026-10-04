@@ -19,7 +19,7 @@ Depsy supports 8 programming languages and their package ecosystems.
 | Language | Dependency File | Registry | Status |
 |----------|-----------------|----------|--------|
 | [Rust]({% link languages/rust.md %}) | `Cargo.toml` | crates.io | Full support |
-| [JavaScript/TypeScript]({% link languages/nodejs.md %}) | `package.json` | npm | Full support |
+| [JavaScript/TypeScript]({% link languages/nodejs.md %}) | `package.json`, `pnpm-workspace.yaml` | npm | Full support |
 | [Python]({% link languages/python.md %}) | `requirements.txt`, `pyproject.toml` | PyPI | Full support |
 | [Go]({% link languages/go.md %}) | `go.mod` | proxy.golang.org | Full support |
 | [PHP]({% link languages/php.md %}) | `composer.json` | Packagist | Full support |
@@ -43,6 +43,7 @@ Depsy automatically detects dependency files by name:
 ```
 Cargo.toml        → Rust
 package.json      → Node.js
+pnpm-workspace.yaml         → Node.js
 requirements.txt  → Python
 pyproject.toml    → Python
 go.mod            → Go

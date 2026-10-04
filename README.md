@@ -48,7 +48,7 @@ Dependency management extension for the [Zed](https://zed.dev) editor.
 | Language | File | Registry | Status |
 |----------|------|----------|--------|
 | Rust | `Cargo.toml` | crates.io + alternative registries | ✅ |
-| JavaScript/TypeScript | `package.json` | npm (+ pnpm workspace catalogs) | ✅ |
+| JavaScript/TypeScript | `package.json`, `pnpm-workspace.yaml` | npm (+ pnpm workspace catalogs) | ✅ |
 | Python | `requirements.txt`, `constraints.txt`, `pyproject.toml`, `hatch.toml` | PyPI | ✅ |
 | Go | `go.mod` | proxy.golang.org | ✅ |
 | PHP | `composer.json` | Packagist | ✅ |
@@ -381,7 +381,7 @@ depsy-lsp scan --file <path> [options]
 #### Supported Files
 
 - Rust: `Cargo.toml`
-- JavaScript/TypeScript: `package.json`
+- JavaScript/TypeScript: `package.json`, `pnpm-workspace.yaml`
 - Python: `requirements.txt`, `pyproject.toml`
 - Go: `go.mod`
 - PHP: `composer.json`

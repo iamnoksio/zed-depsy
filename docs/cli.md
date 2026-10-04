@@ -44,7 +44,7 @@ depsy-lsp scan --file <path> [options]
 | Language | Files |
 |----------|-------|
 | Rust | `Cargo.toml` |
-| Node.js | `package.json` |
+| Node.js | `package.json`, `pnpm-workspace.yaml` |
 | Python | `requirements.txt`, `pyproject.toml` |
 | Go | `go.mod` |
 | PHP | `composer.json` |
