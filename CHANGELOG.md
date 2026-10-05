@@ -14,6 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   actions on the entries of the default `catalog` and of named `catalogs`.
   `depsy-lsp scan --file pnpm-workspace.yaml` scans the catalog entries too.
 
+### Fixed
+
+- A package declared at two versions (in two manifests, or in two pnpm named
+  catalogs) now shows the vulnerabilities and deprecation status of each
+  version. OSV results were stored per package name, so the last version
+  checked overwrote the other one
+  ([#408](https://github.com/mpiton/zed-depsy/issues/408)).
+- Vulnerability diagnostics are published again once the background OSV
+  check finishes. Before, vulnerabilities reached the Problems panel only
+  after the next edit, and transitive vulnerabilities never did.
+- Transitive vulnerabilities already in the cache stay attributed when the
+  OSV query fails. Before, a failed query cleared them from the document
+  until the next successful check.
+- An OSV result no longer clears a deprecation reported by the registry.
+- Advisories that older releases stored in the version cache are no longer
+  shown. Only the OSV check run by the current server counts.
+
 ### Security
 
 - `rustls` 0.23.45 fixes RUSTSEC-2026-0285 (TLS 1.3 handshake messages
