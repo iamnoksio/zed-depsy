@@ -144,6 +144,13 @@ impl ReadCache for MemoryCache {
             }
         })
     }
+
+    async fn contains(&self, key: &str) -> bool {
+        // No clone: `VersionInfo` carries every published version of the package
+        self.entries
+            .get(key)
+            .is_some_and(|entry| !entry.is_expired())
+    }
 }
 
 impl WriteCache for MemoryCache {
@@ -336,6 +343,12 @@ impl ReadCache for HybridCache {
         }
 
         None
+    }
+
+    async fn contains(&self, key: &str) -> bool {
+        // Memory hit: no clone; Miss: go through `get` so a row that only exists on disk is loaded once
+        // and promoted for the lookups that follow
+        self.memory.contains(key).await || self.get(key).await.is_some()
     }
 }
 

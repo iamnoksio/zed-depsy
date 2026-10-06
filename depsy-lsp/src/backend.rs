@@ -156,6 +156,8 @@ struct ProcessingContext {
     maven_central: Arc<tokio::sync::RwLock<MavenCentralRegistry>>,
     osv_client: Arc<OsvClient>,
     vuln_cache: Arc<VulnerabilityCache>,
+    doc_passes: Arc<DashMap<Url, u64>>,
+    pass_counter: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Parse an npm-ecosystem manifest: the catalogs of a `pnpm-workspace.yaml`,
@@ -192,6 +194,14 @@ impl ProcessingContext {
         let Some(file_type) = FileType::detect(uri) else {
             return;
         };
+
+        // Each pass claims the document registry fetches can take seconds (crates.io is limited to 1 req/s),
+        // so an older pass may finish after a newer one; only the latest claim may store its parse
+        let pass = self
+            .pass_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        self.doc_passes.insert(uri.clone(), pass);
 
         let mut dependencies = self.parse_document(uri, content);
         let is_pnpm_workspace = is_pnpm_workspace(uri);
@@ -262,7 +272,7 @@ impl ProcessingContext {
                 let cache = Arc::clone(&cache);
                 async move {
                     // Check cache first
-                    if cache.get(&cache_key).await.is_some() {
+                    if cache.contains(&cache_key).await {
                         tracing::debug!("Cache hit for '{name}' (key: {cache_key})");
                         return;
                     }
@@ -326,16 +336,27 @@ impl ProcessingContext {
             let _ = handle.await;
         }
 
-        // Store document state IMMEDIATELY (before vulnerability check)
-        self.documents.insert(
-            uri.clone(),
-            DocumentState {
-                dependencies: dependencies.clone(),
-                file_type,
-                lockfile_graph: lockfile_graph.clone(),
-                transitive_vulns_by_direct: hashbrown::HashMap::new(),
-            },
-        );
+        // Store document state IMMEDIATELY (before vulnerability check), unless a newer pass (or `did_close`)
+        // took the document over while this one was fetching: its parse is stale and must not replace the newer one
+        // The claim guard is held across the insert so a newer pass cannot slip in between the check and the store
+        // The registry data this pass cached is new either way, so the publish and hint refresh below still run
+        // against whatever state is current
+        let is_current = {
+            let claim = self.doc_passes.get(uri);
+            let is_current = claim.as_deref().is_some_and(|p| *p == pass);
+            if is_current {
+                self.documents.insert(
+                    uri.clone(),
+                    DocumentState {
+                        dependencies: dependencies.clone(),
+                        file_type,
+                        lockfile_graph: lockfile_graph.clone(),
+                        transitive_vulns_by_direct: hashbrown::HashMap::new(),
+                    },
+                );
+            }
+            is_current
+        };
 
         // Publish diagnostics IMMEDIATELY (versions are available, vulnerabilities will update later)
         self.publish_diagnostics(uri).await;
@@ -354,7 +375,8 @@ impl ProcessingContext {
 
         // Fetch vulnerabilities from OSV.dev in BACKGROUND (non-blocking), then
         // republish so the findings reach the Problems panel without an edit.
-        if security_enabled && !dependencies.is_empty() {
+        // A superseded pass leaves the scan to the pass that replaced it
+        if is_current && security_enabled && !dependencies.is_empty() {
             let ctx = self.clone();
             let uri = uri.clone();
 
@@ -596,6 +618,10 @@ pub struct DepsyBackend {
     debounce_generation: Arc<std::sync::atomic::AtomicU64>,
     /// Pending content changes awaiting debounce completion
     pending_changes: Arc<DashMap<Url, String>>,
+    /// Latest processing pass per open document
+    doc_passes: Arc<DashMap<Url, u64>>,
+    /// Source of pass ids; global so a reopened document never reuses one
+    pass_counter: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl DepsyBackend {
@@ -714,6 +740,8 @@ impl DepsyBackend {
             debounce_tasks: Arc::new(DashMap::new()),
             debounce_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             pending_changes: Arc::new(DashMap::new()),
+            doc_passes: Arc::new(DashMap::new()),
+            pass_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -772,6 +800,8 @@ impl DepsyBackend {
             maven_central: Arc::clone(&self.maven_central),
             osv_client: Arc::clone(&*self.osv_client.read().await),
             vuln_cache: Arc::clone(&self.vuln_cache),
+            doc_passes: Arc::clone(&self.doc_passes),
+            pass_counter: Arc::clone(&self.pass_counter),
         }
     }
 
@@ -1559,8 +1589,15 @@ impl LanguageServer for DepsyBackend {
 
         let uri = params.text_document.uri;
 
-        // With FULL sync, we get the entire document content
-        if let Some(change) = params.content_changes.into_iter().next() {
+        // The server is attached to every TOML/JSON/YAML/XML/Ruby/plain-text buffer;
+        // skip the copy and the debounce task for non-manifests
+        if FileType::detect(&uri).is_none() {
+            return;
+        }
+
+        // With FULL sync every change carries the entire document, so the last one is the current content
+        let mut content_changes = params.content_changes;
+        if let Some(change) = content_changes.pop() {
             tracing::debug!("Document changed: {}", uri);
 
             // Store pending content
@@ -1603,7 +1640,8 @@ impl LanguageServer for DepsyBackend {
                 if should_process {
                     tracing::debug!("Processing document after debounce: {}", uri_clone);
                     ctx.process_document(&uri_clone, &content).await;
-                    pending_changes.remove(&uri_clone);
+                    // Only clear our own entry: a newer `did_change` may have stored its content while this pass was still running
+                    pending_changes.remove_if(&uri_clone, |_, pending| *pending == content);
                 }
 
                 // Clean up task handle only if generation matches (no newer task spawned)
@@ -1644,6 +1682,8 @@ impl LanguageServer for DepsyBackend {
         }
         self.pending_changes.remove(&uri);
 
+        // Unclaim first so a pass still in flight cannot re-insert the document
+        self.doc_passes.remove(&uri);
         self.documents.remove(&uri);
 
         // Clear diagnostics for this document
@@ -2524,5 +2564,84 @@ mod tests {
             .collect();
         assert_eq!(osv_queries, 1, "the query for `a` must reach OSV and fail");
         assert_eq!(attributed, vec!["GHSA-vh95-rmgr-6w4m".to_string()]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn superseded_pass_does_not_replace_the_newer_document_state() {
+        use crate::config::NpmRegistryConfig;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // Given a registry where one package answers slowly
+        const SLOW: &str = "depsy-test-superseded-slow";
+        const FAST: &str = "depsy-test-superseded-fast";
+        let packument = serde_json::json!({
+            "dist-tags": { "latest": "1.0.0" },
+            "versions": { "1.0.0": {} }
+        });
+        let registry = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/{SLOW}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(500))
+                    .set_body_json(&packument),
+            )
+            .mount(&registry)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/{FAST}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&packument))
+            .mount(&registry)
+            .await;
+
+        let (service, _socket) = tower_lsp::LspService::new(DepsyBackend::new);
+        let backend = service.inner();
+        backend.config.write().unwrap().security.enabled = false;
+        *backend.npm_registry.write().await = NpmRegistry::with_client_and_config(
+            Arc::clone(&backend.http_client),
+            &NpmRegistryConfig {
+                url: registry.uri(),
+                ..Default::default()
+            },
+        );
+        // The version cache persists on disk between test runs
+        for name in [SLOW, FAST] {
+            backend
+                .version_cache
+                .remove(&FileType::Npm.cache_key(name))
+                .await;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let uri = Url::from_file_path(dir.path().join("package.json")).unwrap();
+        let before_edit =
+            format!(r#"{{"dependencies": {{"{SLOW}": "1.0.0", "{FAST}": "1.0.0"}}}}"#);
+        let after_edit = format!(r#"{{"dependencies": {{"{FAST}": "1.0.0"}}}}"#);
+        let ctx = backend.create_processing_context().await;
+
+        // When a pass is still waiting on the slow package
+        let slow_pass = tokio::spawn({
+            let (ctx, uri) = (ctx.clone(), uri.clone());
+            async move { ctx.process_document(&uri, &before_edit).await }
+        });
+        loop {
+            let requests = registry.received_requests().await.unwrap_or_default();
+            if requests.iter().any(|r| r.url.path().ends_with(SLOW)) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        // And an edit removes that package and is processed to completion first
+        ctx.process_document(&uri, &after_edit).await;
+        slow_pass.await.unwrap();
+
+        // Then the document state is the one parsed from the edit
+        let names: Vec<String> = backend
+            .documents
+            .get(&uri)
+            .map(|doc| doc.dependencies.iter().map(|d| d.name.clone()).collect())
+            .unwrap_or_default();
+        assert_eq!(names, vec![FAST.to_string()]);
     }
 }
