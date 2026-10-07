@@ -286,6 +286,19 @@ impl HybridCache {
         Self { memory, sqlite }
     }
 
+    // Create a hybrid cache whose persistent layer is an in-memory SQLite database
+    ///
+    /// Nothing is read from or written to the user's cache directory, and no cleanup task is spawned
+    #[cfg(test)]
+    pub fn in_memory() -> Self {
+        Self {
+            memory: MemoryCache::new(),
+            sqlite: Some(Arc::new(
+                SqliteCache::in_memory().expect("in-memory SQLite cache"),
+            )),
+        }
+    }
+
     /// Spawn a background task that periodically cleans up expired entries
     fn spawn_cleanup_task(memory: MemoryCache, sqlite: Option<Arc<SqliteCache>>) {
         tokio::spawn(async move {
@@ -504,6 +517,30 @@ mod tests {
             .insert("key".to_string(), create_test_version_info())
             .await;
         assert!(assert_contains_via_trait(&cache, "key").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn hybrid_contains_finds_a_disk_only_entry_and_promotes_it() {
+        // Given an entry present in the SQLite layer only, as after a restart
+        let cache = HybridCache::in_memory();
+        let sqlite = cache.sqlite.as_ref().expect("in-memory SQLite layer");
+        sqlite
+            .insert("key".to_string(), create_test_version_info())
+            .await;
+        assert!(!cache.memory.contains("key").await);
+
+        // When `contains` is asked for it
+        // Then it is found, and promoted so the lookups that follow stay in memory
+        assert!(cache.contains("key").await);
+        assert!(cache.memory.contains("key").await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn hybrid_contains_misses_an_unknown_key() {
+        let cache = HybridCache::in_memory();
+
+        assert!(!cache.contains("key").await);
+        assert!(!cache.memory.contains("key").await);
     }
 
     #[tokio::test]
