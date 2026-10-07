@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A manifest parse that finishes late no longer replaces the result of a
+  newer edit. Before, a slow registry fetch could bring back the hints and
+  diagnostics of dependencies the edit had removed, and its vulnerability
+  check could overwrite the transitive vulnerabilities found for the newer
+  content ([#412](https://github.com/mpiton/zed-depsy/pull/412)).
+- A manifest closed while its dependencies are still being fetched stays
+  closed. Before, the fetch put the document back and published diagnostics
+  for it.
+
 ## [2.1.1] - 2026-10-05
 
 ### Added
